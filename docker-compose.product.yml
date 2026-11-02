@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: food_postgres_product
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-food_db}
+      POSTGRES_USER: ${DB_USER:-food_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required in production}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # [VN] Cổng database được giữ riêng tư bên trong Docker network vì lý do bảo mật
+    volumes:
+      - food_postgres_product_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-food_user} -d $${POSTGRES_DB:-food_db}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - food_product_network
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.product
+    image: food-server:prod
+    container_name: food_server_product
+    restart: always
+    environment:
+      APP_ENV: production
+      PORT: ${SERVER_PORT:-8080}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required in production}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-food_db}
+      DB_USER: ${DB_USER:-food_user}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - food_product_network
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.product
+    image: food-nginx:prod
+    container_name: food_nginx_product
+    restart: always
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    depends_on:
+      - server
+    networks:
+      - food_product_network
+
+volumes:
+  food_postgres_product_data:
+
+networks:
+  food_product_network:
+    name: food_product_network
+    driver: bridge

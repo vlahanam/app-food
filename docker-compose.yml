@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: food_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-food_db}
+      POSTGRES_USER: ${DB_USER:-food_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-food_secret}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT_EXTERNAL:-5432}:5432"
+    volumes:
+      - food_postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-food_user} -d $${POSTGRES_DB:-food_db}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - food_dev_net
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: food-server:dev
+    container_name: food_server_dev
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      PORT: ${SERVER_PORT:-8080}
+      JWT_SECRET: ${JWT_SECRET:-food_app_dev_jwt_secret_key_2026_very_secure_string_min_32_bytes}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-food_db}
+      DB_USER: ${DB_USER:-food_user}
+      DB_PASSWORD: ${DB_PASSWORD:-food_secret}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+    ports:
+      - "${SERVER_PORT_EXTERNAL:-8090}:8080"
+    volumes:
+      - ./server:/app
+      - food_go_mod_cache:/go/pkg/mod
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - food_dev_net
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: food-nginx:dev
+    container_name: food_nginx_dev
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8088}:80"
+      - "${NGINX_SSL_PORT:-8443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - server
+    networks:
+      - food_dev_net
+
+volumes:
+  food_postgres_dev_data:
+  food_go_mod_cache:
+
+networks:
+  food_dev_net:
+    name: food_dev_network
+    driver: bridge

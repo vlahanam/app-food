@@ -1,0 +1,38 @@
+# [VN] Giai đoạn 1: Biên dịch nhị phân Production Golang 1.26
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+
+ENV GOPROXY=https://proxy.golang.org,direct
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+# [VN] Cài đặt công cụ migration CLI
+RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.0
+
+COPY go.mod go.sum* ./
+RUN go mod download
+
+COPY . .
+
+# [VN] Build file nhị phân tối giản, loại bỏ symbol table và đường dẫn máy build (-trimpath)
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /app/bin/server ./cmd/main.go
+
+# [VN] Giai đoạn 2: Runtime image tối thiểu và bảo mật (Hardened Minimal Alpine)
+FROM alpine:3.24
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S -g 10001 appgroup && \
+    adduser -S -D -H -u 10001 -G appgroup appuser
+
+COPY --from=builder --chown=10001:10001 /app/bin/server /app/server
+COPY --from=builder --chown=10001:10001 /go/bin/migrate /usr/local/bin/migrate
+COPY --from=builder --chown=10001:10001 /app/migrations /app/migrations
+
+USER 10001:10001
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/server"]
